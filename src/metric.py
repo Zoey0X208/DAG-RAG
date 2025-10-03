@@ -4,10 +4,10 @@ import string
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
-from openai import OpenAI
+from openai import AzureOpenAI
 
-client = OpenAI(api_key="sk-1234",base_url="https://models.kclab.cloud")
-def execute_openai_chat(client: OpenAI, model, messages, temperature = 0, max_tokens: int | None = None, extra: dict = {}):
+client = AzureOpenAI(api_key="dac9cddf80e14e49b0afb1e6f8401351",azure_endpoint="https://ustc-law-gpt4-3.openai.azure.com",api_version="2024-02-15-preview")
+def execute_openai_chat(client: AzureOpenAI, model, messages, temperature = 0, max_tokens: int | None = None, extra: dict = {}):
     """
     调用 OpenAI 的 chat.completions.create 接口，并记录 token 使用情况。
     打印完整的 response JSON，并返回消息内容。
@@ -109,7 +109,7 @@ Ground-truth Answer
 Does the Prediction imply the Ground-truth Answer? Output Yes or No:"""
 
 
-def execute_openai_chat(client: OpenAI, model, messages, temperature = 0, max_tokens: int | None = None, extra: dict = {}):
+def execute_openai_chat(client: AzureOpenAI, model, messages, temperature = 0, max_tokens: int | None = None, extra: dict = {}):
     """
     调用 OpenAI 的 chat.completions.create 接口，并记录 token 使用情况。
     打印完整的 response JSON，并返回消息内容。
@@ -136,7 +136,7 @@ def ACC_scorer(questions, predictions, answers):
     with ThreadPoolExecutor(max_workers=10) as executor:
         for question, prediction, answer in zip(questions, predictions, answers):
             prompt = acc_prompt.format(question=question, model_output=prediction, answer=' '.join(answer)) # every answer is a ground truth list
-            task = executor.submit(execute_openai_chat, client, "qwen2.5-14b-instruct", [{"role": "user", "content": prompt}], 0, 32)
+            task = executor.submit(execute_openai_chat, client, "gpt-4o", [{"role": "user", "content": prompt}], 0, 32)
             tasks.append(task)
 
     # Collect results and compute accuracy
@@ -147,8 +147,32 @@ def ACC_scorer(questions, predictions, answers):
 
     return round(100 * total_score / len(questions), 2)
 
+def ACC_scorer_single(question, prediction, answer):
+    """
+    针对整个数据集计算 Accuracy 分数
+    """
+    tasks = []
+
+    # Prepare tasks for parallel execution
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        prompt = acc_prompt.format(question=question, model_output=prediction, answer=' '.join(answer)) # every answer is a ground truth list
+        task = executor.submit(execute_openai_chat, client, "gpt-4o", [{"role": "user", "content": prompt}], 0, 32)
+        tasks.append(task)
+
+    # Collect results and compute accuracy
+    for task in tasks:
+        result = task.result()
+        if "yes" in result.lower():
+            return True
+    return False
+
+
 if __name__ == "__main__":
     questions = ["What is the capital of France?", "What is the capital of Germany?", "What is the capital of Italy?"]
     predictions = ["Par", "Berlin", "ome"]
     answers = ["Paris", "Berlin", "Rome"]
     print(ACC_scorer(questions, predictions, answers))
+    question = "What is the capital of France?"
+    prediction = "Paris"
+    answer = "Berlin"
+    print(ACC_scorer_single(question, prediction, answer))

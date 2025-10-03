@@ -17,7 +17,7 @@ from scheduler import Scheduler
 from answerer import Answerer
 from utils import Experiment_Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from metric import F1_scorer, EM_scorer, ACC_scorer
+from metric import F1_scorer, EM_scorer, ACC_scorer, ACC_scorer_single
 logger = logging.getLogger()
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -56,7 +56,7 @@ def parse_args():
 def evaluate(scheduler: Scheduler, args: argparse.Namespace):
     """评估多跳推理系统"""
     # 加载数据集
-    with open(f"/home/fzy0605/gitea/DTS-RAG/data/eval/{args.dataset}.json", "r") as f:
+    with open(f"/home/fzy0605/gitea/DTS-RAG/data/eval/{args.dataset}.json", "r", encoding="utf-8") as f:
         eval_data = json.load(f)
     print("Lenght of dateval_dataset: ", len(eval_data))
         
@@ -72,33 +72,33 @@ def evaluate(scheduler: Scheduler, args: argparse.Namespace):
         
         # 根据策略调用对应的方法进行多跳推理
         if args.policy == "dynamic":
-            final_answer = scheduler.dynamic_execute(question, args.dynamic_num)
+            final_answer, trace_steps = scheduler.dynamic_execute(question, args.dynamic_num)
         elif args.policy == "static":
-            final_answer = scheduler.static_execute(question)
+            final_answer, trace_steps = scheduler.static_execute(question)
         elif args.policy == "bfs":
-            final_answer = scheduler.dynamic_bfs_execute(question, args.bfs_num, args.bfs_topk, args.is_pre, args.is_llm_score)
+            final_answer, trace_steps = scheduler.dynamic_bfs_execute(question, args.bfs_num, args.bfs_topk, args.is_pre, args.is_llm_score)
         elif args.policy == "longrag":
-            final_answer = scheduler.longrag_execute(question)
+            final_answer, trace_steps = scheduler.longrag_execute(question)
         elif args.policy == "long":
-            final_answer = scheduler.long_execute(question)
+            final_answer, trace_steps = scheduler.long_execute(question)
         elif args.policy == "raw":
-            final_answer = scheduler.raw_execute(question)
+            final_answer, trace_steps = scheduler.raw_execute(question)
         elif args.policy == "baserag":
-            final_answer = scheduler.baserag_execute(question)
+            final_answer, trace_steps = scheduler.baserag_execute(question)
         elif args.policy == "withoutchain":
-            final_answer = scheduler.withoutchain_execute(question)
+            final_answer, trace_steps = scheduler.withoutchain_execute(question)
         elif args.policy == "drag":
-            final_answer = scheduler.drag_execute(question)
+            final_answer, trace_steps = scheduler.drag_execute(question)
         elif args.policy == "iterdrag":
-            final_answer = scheduler.iterdrag_execute(question)
+            final_answer, trace_steps = scheduler.iterdrag_execute(question)
         elif args.policy == "iter_retgen":
-            final_answer = scheduler.iter_retgen_execute(question, dataset=args.dataset)
+            final_answer, trace_steps = scheduler.iter_retgen_execute(question, dataset=args.dataset)
         elif args.policy == "selfask":
-            final_answer = scheduler.selfask_execute(question)
+            final_answer, trace_steps = scheduler.selfask_execute(question)
         else:
             raise ValueError("Unsupported policy: " + args.policy)
         
-        return idx, question, final_answer, ground_truths
+        return idx, question_id, question, final_answer, ground_truths, trace_steps
 
     # 使用线程池并发处理数据
     with ThreadPoolExecutor(max_workers=args.num_threads) as executor:
@@ -106,11 +106,29 @@ def evaluate(scheduler: Scheduler, args: argparse.Namespace):
         futures = [executor.submit(process_data, idx, data) for idx, data in enumerate(eval_data)]
         
         # 收集所有任务结果
+        correct_path = "correct.json"
+        wrong_path = "wrong.json"
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing"):
-            idx, question, final_answer, ground_truths = future.result()
+            idx, question_id, question, final_answer, ground_truths, trace_steps = future.result()
             questions[idx] = question
             predictions[idx] = final_answer
             answers[idx] = ground_truths
+
+            # 判定是否正确：直接调用 ACC_scorer（单题列表形式，结果为 0 或 100）
+            single_acc = ACC_scorer_single(question, final_answer or "", ground_truths)
+            is_correct = single_acc == True
+
+            record = {
+                "question_id": question_id,
+                "dataset": args.dataset,
+                "question": question,
+                "final_answer": final_answer,
+                "ground_truths": ground_truths,
+                "steps": trace_steps
+            }
+            out_path = correct_path if is_correct else wrong_path
+            with open(out_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     # 计算整体 F1 和 EM 分数
     f1 = F1_scorer(predictions, answers)
@@ -131,6 +149,7 @@ def run_single_experiment(args: argparse.Namespace,emb_model, cross_model, cross
         azure_endpoint = os.environ.get("OPENAI_BASE_URL", "https://ustc-law-gpt4-3.openai.azure.com").strip()
         azure_api_key = os.environ.get("OPENAI_API_KEY", "dac9cddf80e14e49b0afb1e6f8401351")
         azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+        logger.info("Using Azure OpenAI: endpoint=%s, api_version=%s, api_key_set=%s", azure_endpoint, azure_api_version, bool(azure_api_key))
         client = AzureOpenAI(
             azure_endpoint=azure_endpoint,
             api_key=azure_api_key,
@@ -178,13 +197,19 @@ def run_single_experiment(args: argparse.Namespace,emb_model, cross_model, cross
 
     # Write the updated dictionary to a file
     if args.policy == "dynamic":
-        with open(f"{args.dataset}_dynamic_result.json", "a") as f:
-            f.write(json.dumps(args_dict) + "\n")
+        with open(f"{args.dataset}_dynamic_result.json", "a", encoding="utf-8") as f:
+            f.write(json.dumps(args_dict, ensure_ascii=False) + "\n")
     else:
-        with open(f"{args.dataset}_result.json", "a") as f:
-            f.write(json.dumps(args_dict) + "\n")
+        with open(f"{args.dataset}_result.json", "a", encoding="utf-8") as f:
+            f.write(json.dumps(args_dict, ensure_ascii=False) + "\n")
 
 def main():
+    if not logger.handlers:
+        logging.basicConfig(
+            level=os.getenv("LOG_LEVEL", "INFO"),
+            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     args = parse_args()
     emb_model = SentenceTransformer(args.emb_model_path).to(device)
     cross_tokenizer = AutoTokenizer.from_pretrained(args.cross_model_path)

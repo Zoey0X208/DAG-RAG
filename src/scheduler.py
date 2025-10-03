@@ -38,10 +38,12 @@ class Scheduler:
  
         sub_answer = self.answerer.generate_sub_answer(sub_question=sub_question, accumulated_docs=accumulated_docs, is_cot=self.is_cot, is_force=is_force)
 
-        return sub_answer
+        # 返回子答案与对应检索到的上下文，便于上层记录分步日志
+        return sub_answer, accumulated_docs
 
-    def dynamic_execute(self, question: str, dynamic_num: int) -> str:
+    def dynamic_execute(self, question: str, dynamic_num: int):
         solved_information = []
+        trace_steps = []
 
         def gen_list_and_scores():
             sub_questions = self.planner.generate_tasks(question, solved_information)
@@ -62,19 +64,22 @@ class Scheduler:
                     break
                 sub_question = str(sub_questions[0])
 
-            partial_answer = self._execute_sub_question(sub_question, is_force=self.sub_force)
+            partial_answer, contexts = self._execute_sub_question(sub_question, is_force=self.sub_force)
 
-            solved_information.append({"sub_question": sub_question, "answer": partial_answer})
+            solved_information.append({"sub_question": sub_question, "answer": partial_answer, "contexts": contexts})
+            trace_steps.append({"sub_question": sub_question, "contexts": contexts, "sub_answer": partial_answer})
             final_answer = self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot)
 
             if final_answer and "unknown" not in final_answer.lower():
-                return final_answer
+                return final_answer, trace_steps
             
-        partial_answer = self._execute_sub_question(sub_question = question, is_force = True)
-        return partial_answer
+        partial_answer, contexts = self._execute_sub_question(sub_question = question, is_force = True)
+        trace_steps.append({"sub_question": question, "contexts": contexts, "sub_answer": partial_answer})
+        return partial_answer, trace_steps
 
-    def dynamic_bfs_execute(self, question: str, bfs_num: str, bfs_topk: int, is_pre: bool, is_llm_score: bool) -> str:
+    def dynamic_bfs_execute(self, question: str, bfs_num: str, bfs_topk: int, is_pre: bool, is_llm_score: bool):
         solved_information = []
+        trace_steps = []
         pending_tasks = self.planner.generate_bfs_tasks(question, solved_information, bfs_num)
         print("[Scheduler] BFS pending tasks:", pending_tasks)
 
@@ -102,39 +107,49 @@ class Scheduler:
             filtered_tasks = [task for _, task in scored_tasks[:bfs_topk]]
             print("[Scheduler] BFS filtered tasks:", filtered_tasks)
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                results = executor.map(self._execute_sub_question, filtered_tasks, [self.sub_force]*len(filtered_tasks))
+            def _exec(sq):
+                return self._execute_sub_question(sq, is_force=self.sub_force)
 
-            for index, partial_answer in enumerate(results):
-                solved_information.append({"sub_question": pending_tasks[index], "answer": partial_answer})
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                results = list(executor.map(_exec, filtered_tasks))
+
+            for index, (partial_answer, contexts) in enumerate(results):
+                subq = filtered_tasks[index]
+                solved_information.append({"sub_question": subq, "answer": partial_answer, "contexts": contexts})
+                trace_steps.append({"sub_question": subq, "contexts": contexts, "sub_answer": partial_answer})
 
             final_answer = self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot)
             if "unknown" not in final_answer.lower():
                 print(f"尝试次数: {i}后找到答案{final_answer}")
-                return final_answer
+                return final_answer, trace_steps
             pending_tasks= self.planner.generate_bfs_tasks(question, solved_information, bfs_num)
 
-        return self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot, is_force=True)
+        final_answer = self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot, is_force=True)
+        return final_answer, trace_steps
 
-    def withoutchain_execute(self, question: str) -> str:
+    def withoutchain_execute(self, question: str):
         solved_information = []
+        trace_steps = []
         sub_question = self.planner.generate_next_task(question, solved_information)
         # 小于最大重试次数
         for i in range(self.max_iter):
             # 针对该子任务获取多个检索query（若需要），也可以直接用单一sub_question去检索
-            partial_answer = self._execute_sub_question(sub_question, is_force=self.sub_force)
+            partial_answer, contexts = self._execute_sub_question(sub_question, is_force=self.sub_force)
 
-            solved_information.append({"sub_question": sub_question, "answer": partial_answer})
+            solved_information.append({"sub_question": sub_question, "answer": partial_answer, "contexts": contexts})
+            trace_steps.append({"sub_question": sub_question, "contexts": contexts, "sub_answer": partial_answer})
             final_answer = self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot)
 
             if "unknown" not in final_answer.lower():
-                return final_answer
+                return final_answer, trace_steps
             sub_question = self.planner.generate_next_task(question, solved_information)
-        partial_answer = self._execute_sub_question(sub_question = question, is_force = True)
-        return partial_answer
+        partial_answer, contexts = self._execute_sub_question(sub_question = question, is_force = True)
+        trace_steps.append({"sub_question": question, "contexts": contexts, "sub_answer": partial_answer})
+        return partial_answer, trace_steps
 
-    def static_execute(self, question: str) -> str:
+    def static_execute(self, question: str):
         solved_information = []
+        trace_steps = []
         pending_tasks = self.planner.generate_tasks(question, solved_information)
 
         while pending_tasks:
@@ -142,8 +157,9 @@ class Scheduler:
             partial_answer = None
             # 对当前子任务最多尝试 3 次
 
-            partial_answer = self._execute_sub_question(sub_question)
-            solved_information.append({"sub_question": sub_question, "answer": partial_answer})
+            partial_answer, contexts = self._execute_sub_question(sub_question)
+            solved_information.append({"sub_question": sub_question, "answer": partial_answer, "contexts": contexts})
+            trace_steps.append({"sub_question": sub_question, "contexts": contexts, "sub_answer": partial_answer})
             # 将已执行的子任务出栈
             pending_tasks = pending_tasks[1:]
             # 若仍有剩余任务，则调用 update_tasks 逻辑根据当前已解任务更新后续任务（保证数量不变）
@@ -153,51 +169,63 @@ class Scheduler:
             # 检查是否能给出最终答案
         # 当所有子任务均出栈后，用已解信息生成最终答案
         final_answer = self.answerer.generate_final_answer(question, solved_information, is_force=True)
-        return final_answer
+        return final_answer, trace_steps
 
-    def longrag_execute(self, question: str) -> str:
+    def longrag_execute(self, question: str):
         accumulated_docs = self.retriever.retrieve_q(query=question, is_filter=True, is_extractor=True)
         input = ''.join(accumulated_docs)
 
         prompt, prompt_len = set_prompt(f"Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\nThe following are given passages.\n{input}\n\nAnswer the question based on the given passages. Only give me the answer and do not output any other words.\n\nQuestion: {question}\nAnswer:", self.maxlen)
 
-        return self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": prompt}], temperature=self.answerer.tp)
+        final_answer = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": prompt}], temperature=self.answerer.tp)
+        trace_steps = [{"sub_question": question, "contexts": accumulated_docs, "sub_answer": ""}]
+        return final_answer, trace_steps
     
-    def long_execute(self, question: str) -> str:
+    def long_execute(self, question: str):
         long_docs = self.retriever.retrieve_long_content(question)
         long_content = ''.join(long_docs)
         prompt, prompt_len = set_prompt(f"Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\nThe following are given passages.\n{long_content}\n\nAnswer the question based on the given passages. Only give me the answer and do not output any other words.\n\nQuestion: {question}\nAnswer:", self.maxlen)
 
-        return self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": prompt}], temperature=self.answerer.tp)
+        final_answer = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": prompt}], temperature=self.answerer.tp)
+        trace_steps = [{"sub_question": question, "contexts": long_docs, "sub_answer": ""}]
+        return final_answer, trace_steps
     
-    def raw_execute(self, question: str) -> str:
+    def raw_execute(self, question: str):
         if self.is_cot:
             thought_process = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": f"Think carefully step by step and give your thinking process for the following question:\n\nQuestion: {question}\nThought process:"}], temperature=self.answerer.tp, max_tokens=1000)
             
-            return self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": f"Question: {question}.\nThought process:{thought_process}.\nYour task is to use the thought process to answer the question. Only give me the answer and do not output any other words.\n\nQuestion: {question}\nAnswer:"}], temperature=self.answerer.tp)
+            final_answer = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": f"Question: {question}.\nThought process:{thought_process}.\nYour task is to use the thought process to answer the question. Only give me the answer and do not output any other words.\n\nQuestion: {question}\nAnswer:"}], temperature=self.answerer.tp)
+            return final_answer, []
             
-        return self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": f"Only give me the answer below and do not output any other words.\n\nQuestion: {question}\nAnswer:"}], temperature=self.answerer.tp)
+        final_answer = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": f"Only give me the answer below and do not output any other words.\n\nQuestion: {question}\nAnswer:"}], temperature=self.answerer.tp)
+        return final_answer, []
     
-    def baserag_execute(self, question: str) -> str:
+    def baserag_execute(self, question: str):
         accumulated_docs = self.retriever.retrieve_q(query=question)
         input = ''.join(accumulated_docs)
 
         user_content = f"Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\nThe following are given passages.\n{input}\n\nAnswer the question based on the given passages. Only give me the answer and do not output any other words.\n\nQuestion: {question}\nAnswer:"
 
         final_answer = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": user_content}], temperature=self.answerer.tp)
-        return final_answer
+        trace_steps = [{"sub_question": question, "contexts": accumulated_docs, "sub_answer": ""}]
+        return final_answer, trace_steps
     
-    def drag_execute(self, question: str) -> str:
+    def drag_execute(self, question: str):
         accumulated_docs = self.retriever.retrieve_q(query=question)[::-1]
         user_content = DRAG_PROMPT.format(documents=''.join(accumulated_docs), question=question)
         response = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": user_content}], temperature=self.answerer.tp, extra = {"extra_body": {"guided_regex": r"Answer:.*", "stop": '\n'}})
         final_answer = response[len("Answer:"):].strip()
-        return final_answer
+        trace_steps = [{"sub_question": question, "contexts": accumulated_docs, "sub_answer": ""}]
+        return final_answer, trace_steps
 
-    def iterdrag_execute(self, question: str) -> str:
+    def iterdrag_execute(self, question: str):
         prompt_template = ITER_DRAG_PROMPT
         accumulated_docs = []
-        accumulated_docs.extend(self.retriever.retrieve_q(query=question)[::-1])
+        trace_steps = []
+        first_contexts = self.retriever.retrieve_q(query=question)[::-1]
+        accumulated_docs.extend(first_contexts)
+        # 初始问题检索上下文
+        trace_steps.append({"sub_question": question, "contexts": first_contexts, "sub_answer": ""})
         iter = 1
         
         response = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": prompt_template.format(documents=''.join(accumulated_docs), question=question)}], temperature=self.answerer.tp, extra={"extra_body": {"guided_regex": r"(So the final answer is:|Follow up:).*", "stop": self.intermediate_token}}).strip()
@@ -207,9 +235,12 @@ class Scheduler:
             sub_question = response[len("Follow up:"):].strip()
 
             prompt_template += f"\nFollow up: {sub_question}"
-            accumulated_docs.extend(self.retriever.retrieve_q(query=sub_question)[::-1])
+            sub_contexts = self.retriever.retrieve_q(query=sub_question)[::-1]
+            accumulated_docs.extend(sub_contexts)
 
             response = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": prompt_template.format(documents=''.join(accumulated_docs), question=question)}], temperature=self.answerer.tp, extra={"extra_body": {"guided_regex": r"Intermediate answer:.*", "stop": ["\n", self.final_answer_token, self.followup_token]}}).strip()
+            # 记录该子问题的中间答案
+            trace_steps.append({"sub_question": sub_question, "contexts": sub_contexts, "sub_answer": response[len("Intermediate answer:"):].strip()})
             
             prompt_template += f"\n{response}"
             response = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": prompt_template.format(documents=''.join(accumulated_docs), question=question)}], temperature=self.answerer.tp, extra={"extra_body": {"guided_regex": r"(So the final answer is:|Follow up:).*", "stop": self.intermediate_token}}).strip()
@@ -221,9 +252,9 @@ class Scheduler:
         long_answer = response[len("So the final answer is:"):].strip()
         user_content = f"{long_answer}\n\nAnswer the question based on the long answer above. Only give me the answer and do not output any other words.\n\nQuestion: {question}\nAnswer:"
         final_answer = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": user_content}], temperature=self.answerer.tp)
-        return final_answer
+        return final_answer, trace_steps
     
-    def iter_retgen_execute(self, question: str, dataset: str) -> str:
+    def iter_retgen_execute(self, question: str, dataset: str):
         if dataset == "hotpotqa":
             prompt = ITER_RETGEN_HOTPOTQA_PROMPT
         elif dataset == "musique":
@@ -232,6 +263,7 @@ class Scheduler:
             prompt = ITER_RETGEN_WIKIMQA_PROMPT
         
         query = question
+        trace_steps = []
         for iter in range(self.max_iter):
             accumulated_docs = self.retriever.retrieve_q(query=query)
             documents = ''.join(accumulated_docs)
@@ -240,11 +272,13 @@ class Scheduler:
 
             output = Iter_retgen_format.model_validate_json(response)
             query = f"{question} {output.thought}"
+            # 记录每次迭代的检索和思考（无明确子答案时，sub_answer 记录为 thought）
+            trace_steps.append({"sub_question": query, "contexts": accumulated_docs, "sub_answer": output.thought})
 
         final_answer = output.answer
-        return final_answer
+        return final_answer, trace_steps
 
-    def selfask_execute(self, question: str) -> str:
+    def selfask_execute(self, question: str):
         # 辅助函数：获取文本的最后一行
         def get_last_line(text: str) -> str:
             if "\n" in text:
@@ -272,6 +306,7 @@ class Scheduler:
             extra={"stop": self.intermediate_token}
         ).strip()
 
+        trace_steps = []
         # 循环处理所有后续子问题，直到回答中不再出现“Follow up:”标识
         iter = 0
         while self.followup_token in get_last_line(ret_text) and iter < self.max_iter:
@@ -279,11 +314,12 @@ class Scheduler:
             # 将当前 GPT 的回答追加到提示中，形成上下文
             cur_prompt += f"\n{ret_text}"
             sub_question = extract_question(ret_text)
-            sub_answer = self._execute_sub_question(sub_question=sub_question)
+            sub_answer, contexts = self._execute_sub_question(sub_question=sub_question)
 
             if "unknown" not in sub_answer.lower():
                 # 如果获得子问题答案，则将答案追加到对话中，并保存该答案
                 cur_prompt += f'\n{self.intermediate_token} {sub_answer}.'
+                trace_steps.append({"sub_question": sub_question, "contexts": contexts, "sub_answer": sub_answer})
                 ret_text = self.experiment_counter.execute_openai_chat(
                     model=self.answerer.answer_model,
                     messages=[{"role": "user", "content": cur_prompt}],
@@ -318,4 +354,4 @@ class Scheduler:
         
         user_content = f"{long_answer}\n\nAnswer the question based on the long answer above. Only give me the answer and do not output any other words.\n\nQuestion: {question}\nAnswer:"
         final_answer = self.experiment_counter.execute_openai_chat(model=self.answerer.answer_model, messages=[{"role": "user", "content": user_content}], temperature=self.answerer.tp)
-        return final_answer
+        return final_answer, trace_steps

@@ -1,6 +1,7 @@
 import re
 import json
 from transformers import AutoTokenizer
+import logging
 from openai import OpenAI
 import threading
 set_prompt_tokenizer = AutoTokenizer.from_pretrained('/data/pretrained_models/Qwen2.5-7B-Instruct', trust_remote_code=True)
@@ -63,13 +64,18 @@ class Experiment_Counter:
         调用 OpenAI 的 chat.completions.create 接口，并记录 token 使用情况。
         打印完整的 response JSON，并返回消息内容。
         """
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **extra
-        )
+        logger = logging.getLogger(__name__)
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **extra
+            )
+        except Exception as e:
+            logger.error(f"OpenAI chat.create failed: model={model}, temperature={temperature}, max_tokens={max_tokens}, extra_keys={list(extra.keys()) if extra else []}, error={e}")
+            raise
         # 打印整个 response 的 JSON 数据
 
         # 线程安全地更新计数
@@ -77,6 +83,7 @@ class Experiment_Counter:
             self.completion_tokens += response.usage.completion_tokens
             self.prompt_tokens += response.usage.prompt_tokens
             self.total_tokens += response.usage.total_tokens
+        logger.info(f"LLM usage: prompt={response.usage.prompt_tokens}, completion={response.usage.completion_tokens}, total={response.usage.total_tokens}")
 
         # 返回生成的消息内容
         return response.choices[0].message.content
