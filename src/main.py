@@ -23,7 +23,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 choices = [
-    "glm-4-9b-chat", "mistral-7b-v0.3-instruct", "gpt-4o","qwen2.5-0.5b-instruct", "qwen2.5-3b-instruct","qwen2.5-7b-instruct","qwen2.5-14b-instruct","llama3-8b-instruct","llama3.1-8b-instruct"]
+    "glm-4-9b-chat", "mistral-7b-v0.3-instruct", "gpt-4o","gpt-3.5-turbo","qwen2.5-0.5b-instruct", "qwen2.5-3b-instruct","qwen2.5-7b-instruct","qwen2.5-14b-instruct","llama3-8b-instruct","llama3.1-8b-instruct"]
 cross_model_choices = ["/data/pretrained_models/ms-marco-MiniLM-L-12-v2"]
 
 def parse_args():
@@ -142,10 +142,10 @@ def evaluate(scheduler: Scheduler, args: argparse.Namespace):
     
 def run_single_experiment(args: argparse.Namespace,emb_model, cross_model, cross_tokenizer):
     """运行单次实验"""
-    if args.model == "qwen2.5-b-instruct":
+    if args.model == "qwen2.5-7b-instruct":
         client = openai.OpenAI(
             api_key="sk-1234",
-            base_url="https://models.kclab.cloud"
+            base_url="http://localhost:8100/v1"
         )
     elif args.model == "gpt-4o":
         # Azure OpenAI 配置：从环境变量读取，兼容 Azure 端点/鉴权/版本

@@ -6,7 +6,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 from openai import AzureOpenAI
 
-client = AzureOpenAI(api_key="dac9cddf80e14e49b0afb1e6f8401351",azure_endpoint="https://ustc-law-gpt4-3.openai.azure.com",api_version="2024-02-15-preview")
+client = AzureOpenAI(api_key="dac9cddf80e14e49b0afb1e6f8401351",
+    azure_endpoint="https://ustc-law-gpt4-3.openai.azure.com",
+    api_version="2024-02-15-preview")
+    
 def execute_openai_chat(client: AzureOpenAI, model, messages, temperature = 0, max_tokens: int | None = None, extra: dict = {}):
     """
     调用 OpenAI 的 chat.completions.create 接口，并记录 token 使用情况。
