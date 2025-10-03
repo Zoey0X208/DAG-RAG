@@ -110,6 +110,8 @@ def evaluate(scheduler: Scheduler, args: argparse.Namespace):
         run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         correct_path = f"logs/{args.dataset}_{args.policy}_{args.model}_{run_ts}_correct.json"
         wrong_path = f"logs/{args.dataset}_{args.policy}_{args.model}_{run_ts}_wrong.json"
+        correct_records = []
+        wrong_records = []
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing"):
             idx, question_id, question, final_answer, ground_truths, trace_steps = future.result()
             questions[idx] = question
@@ -129,9 +131,16 @@ def evaluate(scheduler: Scheduler, args: argparse.Namespace):
                 "steps": trace_steps,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
-            out_path = correct_path if is_correct else wrong_path
-            with open(out_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if is_correct:
+                correct_records.append(record)
+            else:
+                wrong_records.append(record)
+
+    # 循环结束后一次性写入标准 JSON 数组
+    with open(correct_path, "w", encoding="utf-8") as f:
+        json.dump(correct_records, f, ensure_ascii=False, indent=2)
+    with open(wrong_path, "w", encoding="utf-8") as f:
+        json.dump(wrong_records, f, ensure_ascii=False, indent=2)
 
     # 计算整体 F1 和 EM 分数
     f1 = F1_scorer(predictions, answers)
