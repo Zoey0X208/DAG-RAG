@@ -3,7 +3,7 @@
 export OPENAI_BASE_URL=""
 export OPENAI_API_KEY=""
 cd APRAG
-python3 src/main.py --dataset musique --policy dynamic --model gpt-3.5-turbo-ca --max_iter 5
+python3 src/main.py --dataset hotpotqa --policy dynamic --model gpt-4o --max_iter 5
 # python3 src/main.py --dataset hotpotqa --policy iter_retgen --model qwen2.5-7b-instruct --max_iter 4
 # python3 src/main.py --dataset hotpotqa --policy raw --model qwen2.5-7b-instruct --is_cot
 # python3 src/main.py --dataset hotpotqa --policy long --model qwen2.5-7b-instruct --is_filter --is_extractor

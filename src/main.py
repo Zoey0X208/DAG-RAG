@@ -5,6 +5,7 @@ from datetime import datetime
 import argparse
 import logging
 import openai
+from openai import AzureOpenAI
 import copy
 import torch
 from sentence_transformers import SentenceTransformer
@@ -22,7 +23,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 choices = [
-    "glm-4-9b-chat", "mistral-7b-v0.3-instruct", "gpt-3.5-turbo-ca","qwen2.5-0.5b-instruct", "qwen2.5-3b-instruct","qwen2.5-7b-instruct","qwen2.5-14b-instruct","llama3-8b-instruct","llama3.1-8b-instruct"]
+    "glm-4-9b-chat", "mistral-7b-v0.3-instruct", "gpt-4o","qwen2.5-0.5b-instruct", "qwen2.5-3b-instruct","qwen2.5-7b-instruct","qwen2.5-14b-instruct","llama3-8b-instruct","llama3.1-8b-instruct"]
 cross_model_choices = ["/data/pretrained_models/ms-marco-MiniLM-L-12-v2"]
 
 def parse_args():
@@ -35,7 +36,7 @@ def parse_args():
     parser.add_argument('--dynamic_model', type=str, choices=['dynamic_llama', 'dynamic_qwen'], default="", help="Model for dynamic lora task planner")
     parser.add_argument('--dynamic_num', type=int, default=1, help="Number of dynamic tasks chains")
     parser.add_argument('--sub_force', action="store_true", default=False, help="is force to answer sub_question")
-    parser.add_argument('--emb_model_path', type=str, default="/data/pretrained_models/multilingual-e5-large", help="Path to the embedding model")
+    parser.add_argument('--emb_model_path', type=str, default="/data/pretrained_models/fzy/models/intfloat/multilingual-e5-large-instruct", help="Path to the embedding model")
     parser.add_argument('--cross_model_path', type=str, default=cross_model_choices[0], help="Path to the cross model")
     parser.add_argument('--r_path', type=str, default="data/corpus/processed/200_2_2", help="Path to the vector database")
     parser.add_argument('--tp', type=float, default=0.7, help="tp for task planner")
@@ -55,7 +56,7 @@ def parse_args():
 def evaluate(scheduler: Scheduler, args: argparse.Namespace):
     """评估多跳推理系统"""
     # 加载数据集
-    with open(f"/data2/swh/APRAG/data/eval/{args.dataset}.json", "r") as f:
+    with open(f"/home/fzy0605/gitea/DTS-RAG/data/eval/{args.dataset}.json", "r") as f:
         eval_data = json.load(f)
     print("Lenght of dateval_dataset: ", len(eval_data))
         
@@ -125,10 +126,15 @@ def run_single_experiment(args: argparse.Namespace,emb_model, cross_model, cross
             api_key="sk-1234",
             base_url="https://models.kclab.cloud"
         )
-    elif args.model == "gpt-3.5-turbo-ca":
-        client = openai.OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("OPENAI_BASE_URL")
+    elif args.model == "gpt-4o":
+        # Azure OpenAI 配置：从环境变量读取，兼容 Azure 端点/鉴权/版本
+        azure_endpoint = os.environ.get("OPENAI_BASE_URL", "https://ustc-law-gpt4-3.openai.azure.com").strip()
+        azure_api_key = os.environ.get("OPENAI_API_KEY", "dac9cddf80e14e49b0afb1e6f8401351")
+        azure_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+        client = AzureOpenAI(
+            azure_endpoint=azure_endpoint,
+            api_key=azure_api_key,
+            api_version=azure_api_version,
         )
     else:
         client = openai.OpenAI(
