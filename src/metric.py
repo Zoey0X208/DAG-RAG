@@ -25,7 +25,14 @@ def execute_openai_chat(client: AzureOpenAI, model, messages, temperature = 0, m
 def normalize_answer(s):
     """
     标准化答案文本：转小写、去除标点、冠词和多余空格
+    对 None 或非字符串输入做安全处理。
     """
+    # 将 None 与非字符串安全转换
+    if s is None:
+        s = ""
+    else:
+        s = str(s)
+
     def remove_articles(text):
         return re.sub(r"\b(a|an|the)\b", " ", text)
     
@@ -37,7 +44,7 @@ def normalize_answer(s):
         return "".join(ch for ch in text if ch not in exclude)
     
     def lower(text):
-        return text.lower()
+        return text.lower() if isinstance(text, str) else ""
     
     return white_space_fix(remove_articles(remove_punc(lower(s))))
 

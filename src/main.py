@@ -106,8 +106,10 @@ def evaluate(scheduler: Scheduler, args: argparse.Namespace):
         futures = [executor.submit(process_data, idx, data) for idx, data in enumerate(eval_data)]
         
         # 收集所有任务结果
-        correct_path = "correct.json"
-        wrong_path = "wrong.json"
+        os.makedirs("logs", exist_ok=True)
+        run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        correct_path = f"logs/{args.dataset}_{args.policy}_{args.model}_{run_ts}_correct.json"
+        wrong_path = f"logs/{args.dataset}_{args.policy}_{args.model}_{run_ts}_wrong.json"
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing"):
             idx, question_id, question, final_answer, ground_truths, trace_steps = future.result()
             questions[idx] = question
@@ -124,7 +126,8 @@ def evaluate(scheduler: Scheduler, args: argparse.Namespace):
                 "question": question,
                 "final_answer": final_answer,
                 "ground_truths": ground_truths,
-                "steps": trace_steps
+                "steps": trace_steps,
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             out_path = correct_path if is_correct else wrong_path
             with open(out_path, "a", encoding="utf-8") as f:
