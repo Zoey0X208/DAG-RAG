@@ -70,7 +70,7 @@ class Scheduler:
             trace_steps.append({"sub_question": sub_question, "contexts": contexts, "sub_answer": partial_answer})
             final_answer = self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot)
 
-            if final_answer and "unknown" not in final_answer.lower():
+            if final_answer and ("unknown" not in final_answer.lower()) and ("blocked" not in final_answer.lower()):
                 return final_answer, trace_steps
             
         partial_answer, contexts = self._execute_sub_question(sub_question = question, is_force = True)
@@ -119,7 +119,7 @@ class Scheduler:
                 trace_steps.append({"sub_question": subq, "contexts": contexts, "sub_answer": partial_answer})
 
             final_answer = self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot)
-            if "unknown" not in final_answer.lower():
+            if ("unknown" not in final_answer.lower()) and ("blocked" not in final_answer.lower()):
                 print(f"尝试次数: {i}后找到答案{final_answer}")
                 return final_answer, trace_steps
             pending_tasks= self.planner.generate_bfs_tasks(question, solved_information, bfs_num)
@@ -140,7 +140,7 @@ class Scheduler:
             trace_steps.append({"sub_question": sub_question, "contexts": contexts, "sub_answer": partial_answer})
             final_answer = self.answerer.generate_final_answer(question, solved_information, is_cot=self.is_cot)
 
-            if "unknown" not in final_answer.lower():
+            if ("unknown" not in final_answer.lower()) and ("blocked" not in final_answer.lower()):
                 return final_answer, trace_steps
             sub_question = self.planner.generate_next_task(question, solved_information)
         partial_answer, contexts = self._execute_sub_question(sub_question = question, is_force = True)
@@ -316,7 +316,7 @@ class Scheduler:
             sub_question = extract_question(ret_text)
             sub_answer, contexts = self._execute_sub_question(sub_question=sub_question)
 
-            if "unknown" not in sub_answer.lower():
+            if ("unknown" not in sub_answer.lower()) and ("blocked" not in sub_answer.lower()):
                 # 如果获得子问题答案，则将答案追加到对话中，并保存该答案
                 cur_prompt += f'\n{self.intermediate_token} {sub_answer}.'
                 trace_steps.append({"sub_question": sub_question, "contexts": contexts, "sub_answer": sub_answer})

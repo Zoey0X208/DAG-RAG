@@ -37,7 +37,7 @@ def parse_response_list(tasks_str):
     if not isinstance(tasks_str, str):
         tasks_str = str(tasks_str)
     stripped = tasks_str.strip()
-    if not stripped or stripped.lower() == "unknown":
+    if not stripped or stripped.lower() in ("unknown", "[blocked]", "blocked"):
         return []
     try:
         parsed = json.loads(stripped)
@@ -112,7 +112,7 @@ class Experiment_Counter:
                 err_text,
             )
             if ("content_filter" in err_text) or ("ResponsibleAIPolicyViolation" in err_text) or ("status: 400" in err_text):
-                return "Unknown"
+                return "[Blocked]"
             # 其他错误保留原行为：抛出以便外层感知
             raise
         # 打印整个 response 的 JSON 数据
@@ -128,7 +128,7 @@ class Experiment_Counter:
         content = response.choices[0].message.content
         if _looks_like_jailbreak(content):
             logger.warning("Potential jailbreak/injection detected. Returning fallback answer.")
-            return "Unknown"
+            return "[Blocked]"
         return content
 
 # 示例用法：
